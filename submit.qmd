@@ -1,28 +1,247 @@
 ---
-title: ""
+title: "Lab4"
 author: ""
 format:
   html:
     embed-resources: true
 ---
 
-## Quarto
-
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
-
-## Running Code
-
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+## Read the data
 
 ```{r}
-1 + 1
+if (!file.exists("met_all.gz"))
+  download.file(
+    url = "https://raw.githubusercontent.com/USCbiostats/data-science-data/master/02_met/met_all.gz",
+    destfile = "met_all.gz",
+    method   = "libcurl",
+    timeout  = 60
+    )
+met <- data.table::fread("met_all.gz")
 ```
 
-You can add options to executable code like this
+## Prep the data
 
 ```{r}
-#| echo: false
-2 * 2
+dim(met)
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+```{r}
+summary(met)
+```
+
+```{r}
+summary(met$temp)
+```
+
+```{r}
+#Remove temp < -17
+met <- met[temp > -17.0]
+summary(met$temp)
+```
+
+```{r}
+summary(met$dew.point)
+```
+
+```{r}
+summary(met$wind.sp)
+```
+
+```{r}
+#no missing data coded as 9999 
+met[met$elev==9999.0] <- NA
+summary(met$elev)
+```
+
+```{r}
+met[met$dew.point==9999.0] <- NA
+summary(met$dew.point)
+```
+
+```{r}
+met[met$wind.sp==9999.0] <- NA
+summary(met$wind.sp)
+```
+
+## Create Date
+
+```{r}
+#as.Date, save this date variable into met
+met$date = as.Date(paste(met$year, met$month, met$day, sep = "-"))
+```
+
+```{r}
+unique(data.table::week(met$date))
+```
+
+```{r}
+#alternative method for looking at first week
+met_wk1 <- met[day >=1 & day <= 7]
+summary(met_wk1)
+```
+
+```{r}
+#Means for variables
+mean(met_wk1$temp)
+mean(met_wk1$rh) 
+mean(met_wk1$wind.sp)
+mean(met_wk1$vis.dist)
+mean(met_wk1$dew.point)
+mean(met_wk1$lat)
+mean(met_wk1$lon)
+mean(met_wk1$elev)
+```
+
+```{r}
+#Make mean variables 
+met_avg <- met_wk1[, .(
+  temp = mean(temp),
+  wind.sp = mean(wind.sp),
+  vis.dist = mean(vis.dist),
+  dew.point = mean(dew.point),
+  lat  = mean(lat),
+  lon  = mean(lon),
+  elev = mean(elev),
+  rh = mean(rh)
+  ), by = c("USAFID", "day")][order(temp)]
+
+head(met_avg)
+tail(met_avg)
+```
+
+```{r}
+#create region variable (NW, SW, NE, SE)
+#lon (E,W) = -98.00, lat (N,S) = 39.71
+
+#from lecture 3
+#met_NW <- met[lon < -98.00, lat > 39.71, .(temp, rh, wind.sp, vis.dist, dew.point, lat, lon, elev)]
+#met_SW <- met[lon < -98.00, lat < 39.71, .(temp, rh, wind.sp, vis.dist, dew.point, lat, lon, elev)]
+#met_NE <- met[lon > -98.00, lat > 39.71, .(temp, rh, wind.sp, vis.dist, dew.point, lat, lon, elev)]
+#met_SE <- met[lon > -98.00, lat < 39.71, .(temp, rh, wind.sp, vis.dist, dew.point, lat, lon, elev)]
+```
+
+```{r}
+#create region variable (NW, SW, NE, SE) for wk1
+met_wk1$region <- ifelse(met_wk1$lon < -98.00 & met_wk1$lat >= 39.71, "NW",
+                           ifelse(met_wk1$lon < -98.00 & met_wk1$lat <39.71, "SW",
+                                  ifelse(met_wk1$lon >= -98.00 & met_wk1$lat >= 39.71, "NE",
+                                         ifelse(met_wk1$lon >= -98.00 & met_wk1$lat < 39.71, "SE", NA))))
+```
+
+```{r}
+#create categorical variable for elev as per lecture
+met_wk1$elev_cat <- ifelse(met_wk1$elev > 252, "high", "low")
+```
+
+## Plotting
+
+```{r}
+#Use geom_violin to examine the wind speed and dew point by region
+
+#make sure install.packages("ggplot2") if needed
+library(ggplot2)
+#??geom_violin
+library(magrittr)
+
+met_wk1[!is.na(wind.sp) & !is.na(dew.point)] %>%
+ggplot() +
+geom_violin(
+  mapping = aes
+  (x = wind.sp,
+  y = dew.point,
+  fill = region))
+```
+
+```{r}
+#use geom_jitter with stat_smooth to examine the association between dew point and wind speed by region
+
+met_wk1[!is.na(wind.sp) & !is.na(dew.point)] %>%
+ggplot(mapping = aes
+  (x = wind.sp,
+  y = dew.point,
+  fill = region,
+  col = region)) +
+geom_jitter() + 
+stat_smooth(method = lm)
+```
+
+```{r}
+#Use geom_bar to create barplots of the weather stations by elevation category colored by region
+
+#how to get categorized by weather station?
+#make nice labels 
+
+met_wk1[!is.na(elev)] %>%
+ggplot() +
+geom_bar(mapping = aes
+  (x = elev_cat,
+  fill = region), position = "dodge") + 
+scale_fill_viridis_d() +
+labs(title = "Elevation Category by Region") + 
+labs(x = "Elevation Category", y = "Count")
+```
+
+```{r}
+#Use stat_summary to examine mean dew point and wind speed by region with standard deviation error bars
+#need package Hmisc
+#?stat_summary
+
+summary <- met_wk1[!is.na(wind.sp) & !is.na(dew.point)] %>%
+ggplot(mapping = aes
+  (x = wind.sp,
+  y = dew.point,
+  fill = region,
+  col = region)) + 
+stat_summary(, fun.data="mean_sdl") + 
+stat_summary(geom = "errorbar")
+
+summary
+```
+
+```{r}
+#Make a map showing the spatial trend in relative humidity in the US
+library(leaflet)
+library(dplyr)
+#??leaflet
+
+met_rh <- met[,.(rh = mean(rh,na.rm=TRUE), lat = mean(lat), lon = mean(lon)),  by=c("USAFID")]
+met_rh <- met_rh[!is.na(rh)]
+
+#color palette
+rh.pal <- colorNumeric(c('lightblue','blue','darkblue'), domain=met_rh$rh)
+```
+
+```{r}
+#rank(-rh) <= 10
+leaflet(met_rh) %>% 
+  addProviderTiles('CartoDB.Positron') %>% 
+  addCircleMarkers(
+    lat = ~lat, lng=~lon,
+    label = ~paste0(round(rh,2), ' C'), color = ~ rh.pal(rh),
+    opacity = 1, fillOpacity = 1, radius = 0.5) %>%
+  addMarkers(
+    lng = met_rh$lon[rank(-met_rh$rh) <= 10],
+    lat = met_rh$lat[rank(-met_rh$rh) <= 10],
+    popup = ~paste("Top 10: ", rh, "%")) %>%
+  addLegend('bottomleft', pal=rh.pal, values=met_rh$rh,
+          title='Relative Humidity', opacity=1)
+```
+
+```{r}
+#install.packages('gganimate')
+library(gganimate)
+#install.packages("gifski")
+#library(gifski)
+library(transformr)
+
+#met$date <- as.Date(met$date)
+
+animate_plot <- ggplot(met_wk1, aes(x = date, y = temp)) +
+  geom_line() +
+  labs(x = "Date", y = "Temperature", title = "Temperature Variation Over Time") +
+  transition_states(date, transition_length = 2, state_length = 1) +
+  enter_fade() +
+  exit_fade()
+
+anim_save("animate_plot.gif", animate_plot, fps = 10)
+```
